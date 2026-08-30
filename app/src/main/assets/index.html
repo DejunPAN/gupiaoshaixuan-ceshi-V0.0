@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>量形选股</title>
+<style>
+  :root {
+    --bg: #1a1a2e;
+    --panel: #16213e;
+    --panel2: #0f3460;
+    --accent: #00d26a;
+    --red: #ff4757;
+    --text: #eaeaea;
+    --muted: #8a93a8;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+    padding: 12px 12px 40px;
+    min-height: 100vh;
+  }
+  h1 { font-size: 20px; margin-bottom: 4px; }
+  .sub { color: var(--muted); font-size: 12px; margin-bottom: 14px; }
+  .card {
+    background: var(--panel);
+    border-radius: 10px;
+    padding: 14px;
+    margin-bottom: 12px;
+  }
+  .card h2 { font-size: 14px; color: var(--accent); margin-bottom: 10px; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  label { font-size: 12px; color: var(--muted); display: block; margin-bottom: 3px; }
+  input {
+    width: 100%; padding: 7px 8px; border-radius: 6px;
+    border: 1px solid #2c3e66; background: #0d1b2a; color: var(--text);
+    font-size: 13px;
+  }
+  input:focus { outline: 1px solid var(--accent); }
+  button {
+    width: 100%; padding: 12px; border: 0; border-radius: 8px;
+    background: var(--accent); color: #062; font-size: 15px; font-weight: 600;
+    cursor: pointer; margin-top: 10px;
+  }
+  button:disabled { background: #555; color: #999; cursor: not-allowed; }
+  .progress {
+    margin-top: 10px; font-size: 12px; color: var(--muted); display: none;
+  }
+  .progress .bar { height: 6px; background: #0d1b2a; border-radius: 3px; margin-top: 5px; overflow: hidden; }
+  .progress .fill { height: 100%; background: var(--accent); width: 0%; transition: width .2s; }
+  .stat { font-size: 12px; color: var(--muted); margin-top: 8px; display: none; }
+  .result-item {
+    background: var(--panel2); border-radius: 8px; padding: 10px 12px;
+    margin-bottom: 8px; cursor: pointer;
+  }
+  .result-item .top { display: flex; justify-content: space-between; align-items: center; }
+  .result-item .name { font-size: 15px; font-weight: 600; }
+  .result-item .score { color: var(--accent); font-weight: 700; font-size: 16px; }
+  .result-item .meta { font-size: 11px; color: var(--muted); margin-top: 4px; line-height: 1.5; }
+  .tag { display: inline-block; background: #0d1b2a; border-radius: 4px; padding: 1px 6px; font-size: 10px; margin-right: 4px; color: #c9d1e0; }
+  .chart { font-family: monospace; font-size: 7px; line-height: 1.15; color: var(--accent); background: #0d1b2a; border-radius: 6px; padding: 8px; margin-top: 6px; overflow-x: auto; white-space: pre; }
+  .empty { color: var(--muted); font-size: 13px; text-align: center; padding: 20px; }
+</style>
+</head>
+<body>
+  <h1>量形选股</h1>
+  <div class="sub">双爆量 + 缩量转增 形态匹配 · 全市场扫描</div>
+
+  <div class="card">
+    <h2>形态参数</h2>
+    <div class="grid">
+      <div><label>爆量倍数 SURGE_RATIO</label><input id="p_surge" type="number" step="0.1" value="1.8"></div>
+      <div><label>均量窗口 MA_WINDOW</label><input id="p_ma" type="number" value="10"></div>
+      <div><label>连跌天数 FALL_DAYS</label><input id="p_fall" type="number" value="2"></div>
+      <div><label>一日游阈值 SUSTAIN</label><input id="p_sustain" type="number" step="0.1" value="1.5"></div>
+      <div><label>今日量占峰值上限</label><input id="p_peak" type="number" step="0.05" value="0.80"></div>
+      <div><label>股价上限 MAX_PRICE</label><input id="p_price" type="number" value="70"></div>
+    </div>
+    <button id="btnScan">开始全市场扫描</button>
+    <div class="progress" id="progress">
+      <div id="progressText">准备中...</div>
+      <div class="bar"><div class="fill" id="progressFill"></div></div>
+    </div>
+    <div class="stat" id="stat"></div>
+  </div>
+
+  <div class="card">
+    <h2>匹配结果 <span style="color:var(--muted);font-weight:400;" id="resultCount"></span></h2>
+    <div id="results"><div class="empty">点击「开始扫描」后结果显示在这里</div></div>
+  </div>
+
+<script src="matcher.js"></script>
+<script>
+(function () {
+  const $ = (id) => document.getElementById(id);
+
+  const pids = {
+    SURGE_RATIO: 'p_surge', MA_WINDOW: 'p_ma', FALL_DAYS: 'p_fall',
+    SUSTAIN_RATIO: 'p_sustain', TODAY_PEAK_RATIO: 'p_peak', MAX_PRICE: 'p_price',
+  };
+
+  function readCfg() {
+    CFG.SURGE_RATIO = parseFloat($('p_surge').value) || 1.8;
+    CFG.MA_WINDOW = parseInt($('p_ma').value) || 10;
+    CFG.FALL_DAYS = parseInt($('p_fall').value) || 2;
+    CFG.SUSTAIN_RATIO = parseFloat($('p_sustain').value) || 1.5;
+    CFG.TODAY_PEAK_RATIO = parseFloat($('p_peak').value) || 0.8;
+    CFG.MAX_PRICE = parseFloat($('p_price').value) || 70;
+  }
+
+  function setProgress(shown, text, pct) {
+    $('progress').style.display = shown ? 'block' : 'none';
+    if (text != null) $('progressText').textContent = text;
+    if (pct != null) $('progressFill').style.width = pct + '%';
+  }
+
+  function fmt(n) { return n == null ? '-' : n.toLocaleString('zh-CN'); }
+
+  function asciiChart(vols) {
+    const h = 8;
+    const mx = Math.max(...vols) || 1;
+    const norm = vols.map(v => Math.round(v / mx * h));
+    let out = '';
+    for (let r = h; r > 0; r--) {
+      out += norm.map(n => (n >= r ? '#' : ' ')).join('') + '\n';
+    }
+    return out;
+  }
+
+  function renderResults(results) {
+    const box = $('results');
+    $('resultCount').textContent = results.length ? `(${results.length} 只命中)` : '';
+    if (!results.length) {
+      box.innerHTML = '<div class="empty">无命中。可尝试放宽 SURGE_RATIO 或缩短 FALL_DAYS。</div>';
+      return;
+    }
+    box.innerHTML = results.slice(0, 100).map(r => {
+      const matched = r.matched;
+      const tags = [
+        `<span class="tag">${r.code}</span>`,
+        `<span class="tag">¥${r.price != null ? r.price.toFixed(2) : '-'}</span>`,
+        `<span class="tag">爆1:${r.ratio1}x</span>`,
+        `<span class="tag">爆2:${r.ratio2}x</span>`,
+        `<span class="tag">连跌${r.fall_len}天</span>`,
+        `<span class="tag">今+${r.today_chg}%</span>`,
+      ].join('');
+      const chart = matched ? `<div class="chart">${asciiChart(r.volumes)}</div>` : '';
+      return `<div class="result-item">
+        <div class="top"><span class="name">${r.name || r.code}</span>
+          <span class="score">${r.score}</span></div>
+        <div class="meta">${tags}</div>
+        ${chart}
+      </div>`;
+    }).join('');
+  }
+
+  $('btnScan').addEventListener('click', async () => {
+    readCfg();
+    const btn = $('btnScan');
+    btn.disabled = true;
+    setProgress(true, '第一步：粗筛全市场（拉取名称+现价）...', 2);
+
+    const t0 = Date.now();
+    const { filtered } = await VolMatcher.coarseFilter((done, total) => {
+      setProgress(true, `第一步：粗筛中 ${done}/${total}`, 2 + Math.round(done / total * 28));
+    });
+    $('stat').style.display = 'block';
+    $('stat').textContent = `粗筛完成：全市场活跃股 → 过滤 ST/高价后 ${filtered.length} 只候选，开始精筛...`;
+    setProgress(true, `第二步：精筛 ${filtered.length} 只（拉K线+判定形态）...`, 30);
+
+    const results = await VolMatcher.fineScan(filtered, (idx, total) => {
+      const pct = 30 + Math.round(idx / total * 68);
+      setProgress(true, `精筛中 ${idx}/${total}`, pct);
+    });
+
+    const matched = results.filter(r => r.matched);
+    setProgress(false);
+    $('stat').textContent =
+      `完成：候选 ${filtered.length} 只，符合全部规则 ${matched.length} 只，耗时 ${((Date.now() - t0) / 1000).toFixed(0)} 秒`;
+    renderResults(matched);
+    btn.disabled = false;
+  });
+})();
+</script>
+</body>
+</html>

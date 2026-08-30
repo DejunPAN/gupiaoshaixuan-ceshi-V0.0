@@ -1,0 +1,42 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'com.volmatcher.app'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId "com.volmatcher.app"
+        minSdk 21
+        targetSdk 34
+        versionCode 1
+        versionName "1.0"
+    }
+
+    // release 签名: keystore 由 CI(keytool)生成; 密码从环境变量读, 缺失时回退默认值
+    signingConfigs {
+        release {
+            storeFile rootProject.file("keystore.jks")
+            storePassword System.getenv("KEYSTORE_PASSWORD") ?: "volmatcher123"
+            keyAlias System.getenv("KEY_ALIAS") ?: "volmatcher"
+            keyPassword System.getenv("KEY_PASSWORD") ?: "volmatcher123"
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig signingConfigs.release
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+
+// 无第三方依赖: WebView / JavascriptInterface 均为 Android 框架自带
+dependencies {
+}
