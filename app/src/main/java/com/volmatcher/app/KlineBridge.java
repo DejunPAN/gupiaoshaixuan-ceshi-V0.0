@@ -1,5 +1,7 @@
 package com.volmatcher.app;
 
+import android.content.Context;
+import android.content.Intent;
 import android.webkit.JavascriptInterface;
 import android.webkit.WebView;
 
@@ -21,13 +23,16 @@ import java.util.concurrent.Executors;
  * 数据源:
  *   - fetchSinaKline : 新浪 K 线(历史成交量, 稳定无风控)
  *   - fetchQuotes    : 腾讯批量行情(名称/现价, GBK 编码)
+ *   - shareText      : 唤起系统分享面板(可分享到通达信/微信/文件管理器等)
  */
 public class KlineBridge {
 
     private final ExecutorService executor = Executors.newFixedThreadPool(6);
+    private final Context context;
     private final WebView webView;
 
-    public KlineBridge(WebView webView) {
+    public KlineBridge(Context context, WebView webView) {
+        this.context = context;
         this.webView = webView;
     }
 
@@ -71,6 +76,18 @@ public class KlineBridge {
         }
         // 腾讯返回 v_sh600000="..." 一段一段; 前端自行解析。这里仅原样返回文本。
         return "\"" + escapeJson(body) + "\"";
+    }
+
+    // ---------------- 系统分享(通达信/微信/文件管理器) ----------------
+
+    @JavascriptInterface
+    public void shareText(final String text) {
+        Intent send = new Intent(Intent.ACTION_SEND);
+        send.setType("text/plain");
+        send.putExtra(Intent.EXTRA_TEXT, text);
+        Intent chooser = Intent.createChooser(send, "分享股票清单");
+        chooser.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        context.startActivity(chooser);
     }
 
     // ---------------- 工具 ----------------
