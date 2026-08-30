@@ -26,7 +26,7 @@ public class MainActivity extends Activity {
         settings.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
 
         // 关键: 注入原生桥, 供 JS 调用来拉取无 CORS 的行情/K线数据
-        webView.addJavascriptInterface(new KlineBridge(webView), "NativeData");
+        webView.addJavascriptInterface(new KlineBridge(this, webView), "NativeData");
 
         // 加载本地 H5
         webView.loadUrl("file:///android_asset/index.html");
