@@ -164,7 +164,7 @@ function hasBridge() {
   return typeof window.NativeData !== 'undefined';
 }
 
-/** 原生桥: 拉新浪 K 线(返回 [{day, close, volume}, ...] 或 null) */
+/** 原生桥: 拉新浪 K 线(返回 [{day, open, high, low, close, volume}, ...] 或 null) */
 function bridgeFetchSina(code, days) {
   return new Promise((resolve) => {
     const cb = '__volCb' + (++callbackSeq);
@@ -225,6 +225,11 @@ function buildCodeSpace() {
   return codes;
 }
 
+/** 腾讯行情接口需要的带交易所前缀代码 */
+function tdxSymbol(code) {
+  return (code.startsWith('6') ? 'sh' : 'sz') + code;
+}
+
 /** 粗筛: 遍历代码空间拿全市场活跃股 + 过滤 ST/高价 */
 async function coarseFilter(progressCb) {
   const codespace = buildCodeSpace();
@@ -233,6 +238,7 @@ async function coarseFilter(progressCb) {
   let done = 0;
   for (let i = 0; i < codespace.length; i += CHUNK) {
     const chunk = codespace.slice(i, i + CHUNK);
+    // 腾讯行情接口要求 sh600000 / sz000001 格式
     const symChunk = chunk.map(code => (code.startsWith('6') ? 'sh' : 'sz') + code);
     let text = '';
     if (hasBridge()) {
@@ -296,7 +302,10 @@ async function fineScan(filtered, progressCb) {
       if (data.dates[data.dates.length - 1] < MIN_DATE) continue; // 过滤陈旧
       const { score, detail } = analyze(data.volumes, CFG);
       if (score > 0) {
-        results.push({ code, name: stock ? stock.name : code, price: stock ? stock.price : null, score, dates: data.dates, volumes: data.volumes, ...detail });
+        results.push({
+          code, name: stock ? stock.name : code, price: stock ? stock.price : null,
+          score, dates: data.dates, volumes: data.volumes, kline: data, ...detail,
+        });
       }
       await sleep(30);
     }
@@ -315,9 +324,13 @@ async function fetchKline(code, days) {
   let data = null;
   if (hasBridge()) {
     const raw = await bridgeFetchSina(code, days);
-    if (Array.isArray(raw) && raw.length >= days) {
+    if (Array.isArray(raw) && raw.length >= Math.min(days, 5)) {
       data = {
         dates: raw.map(k => k.day),
+        opens: raw.map(k => parseFloat(k.open)),
+        highs: raw.map(k => parseFloat(k.high)),
+        lows: raw.map(k => parseFloat(k.low)),
+        closes: raw.map(k => parseFloat(k.close)),
         volumes: raw.map(k => parseFloat(k.volume)),
       };
     }
@@ -330,10 +343,45 @@ async function fetchKline(code, days) {
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
+// ============ 导出(通达信自选清单) ============
+
+/** 生成通达信可导入文本: 每行一个股票代码(带 sh/sz 前缀), 可附名称 */
+function exportTdxText(results, withName) {
+  return results.map(r => {
+    const sym = tdxSymbol(r.code);
+    return withName ? `${sym}\t${r.name || ''}` : sym;
+  }).join('\n');
+}
+
+/** 仅 6 位代码(通达信部分版本用裸代码) */
+function exportCodesText(results) {
+  return results.map(r => r.code).join('\n');
+}
+
+/** 复制或分享文本: 优先系统分享, 失败回退剪贴板 */
+async function shareOrCopy(text) {
+  if (navigator.share) {
+    try {
+      await navigator.share({ title: '量形选股结果', text });
+      return 'shared';
+    } catch (e) { /* 用户取消或不可用, 继续走复制 */ }
+  }
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(text);
+      return 'copied';
+    }
+  } catch (e) { /* ignore */ }
+  return 'fail';
+}
+
 // 暴露给调试/测试
 if (typeof window !== 'undefined') {
-  window.VolMatcher = { CFG, analyze, findSurges, parseQuotes, coarseFilter, fineScan, buildCodeSpace };
+  window.VolMatcher = {
+    CFG, analyze, findSurges, parseQuotes, coarseFilter, fineScan, buildCodeSpace,
+    tdxSymbol, exportTdxText, exportCodesText, shareOrCopy,
+  };
 }
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { CFG, analyze, findSurges, parseQuotes, buildCodeSpace };
+  module.exports = { CFG, analyze, findSurges, parseQuotes, buildCodeSpace, tdxSymbol };
 }
