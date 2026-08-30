@@ -45,6 +45,9 @@
     cursor: pointer; margin-top: 10px;
   }
   button:disabled { background: #555; color: #999; cursor: not-allowed; }
+  .btn-row { display: flex; gap: 8px; }
+  .btn-row button { margin-top: 0; }
+  .btn-ghost { background: var(--panel2); color: var(--text); }
   .progress {
     margin-top: 10px; font-size: 12px; color: var(--muted); display: none;
   }
@@ -61,7 +64,26 @@
   .result-item .meta { font-size: 11px; color: var(--muted); margin-top: 4px; line-height: 1.5; }
   .tag { display: inline-block; background: #0d1b2a; border-radius: 4px; padding: 1px 6px; font-size: 10px; margin-right: 4px; color: #c9d1e0; }
   .chart { font-family: monospace; font-size: 7px; line-height: 1.15; color: var(--accent); background: #0d1b2a; border-radius: 6px; padding: 8px; margin-top: 6px; overflow-x: auto; white-space: pre; }
+  .kline { display: none; margin-top: 8px; }
+  .kline canvas { width: 100%; height: 160px; background: #0d1b2a; border-radius: 6px; }
   .empty { color: var(--muted); font-size: 13px; text-align: center; padding: 20px; }
+
+  /* 导出弹窗 */
+  .modal-mask {
+    position: fixed; inset: 0; background: rgba(0,0,0,.6);
+    display: none; align-items: center; justify-content: center; padding: 16px; z-index: 50;
+  }
+  .modal-mask.show { display: flex; }
+  .modal {
+    background: var(--panel); border-radius: 12px; padding: 16px; width: 100%; max-width: 480px;
+  }
+  .modal h3 { font-size: 15px; color: var(--accent); margin-bottom: 10px; }
+  .modal textarea {
+    width: 100%; height: 200px; background: #0d1b2a; color: var(--text);
+    border: 1px solid #2c3e66; border-radius: 6px; padding: 8px; font-size: 12px;
+    font-family: monospace; resize: none;
+  }
+  .modal .hint { font-size: 11px; color: var(--muted); margin: 8px 0; line-height: 1.5; }
 </style>
 </head>
 <body>
@@ -88,13 +110,31 @@
 
   <div class="card">
     <h2>匹配结果 <span style="color:var(--muted);font-weight:400;" id="resultCount"></span></h2>
+    <div class="btn-row" id="exportRow" style="display:none;">
+      <button id="btnExport" class="btn-ghost">导出通达信清单</button>
+    </div>
     <div id="results"><div class="empty">点击「开始扫描」后结果显示在这里</div></div>
+  </div>
+
+  <!-- 导出弹窗 -->
+  <div class="modal-mask" id="exportMask">
+    <div class="modal">
+      <h3>通达信自选导入清单</h3>
+      <textarea id="exportText" readonly></textarea>
+      <div class="hint">每行一个代码（带 sh/sz 前缀）。在通达信电脑版：自选股 → 右键「自选股设置 / 导入」→ 选择此文本文件即可。手机点「分享」可直接发给文件管理器或微信保存。</div>
+      <div class="btn-row">
+        <button id="btnCopy">复制</button>
+        <button id="btnShare" class="btn-ghost">分享</button>
+        <button id="btnClose" class="btn-ghost">关闭</button>
+      </div>
+    </div>
   </div>
 
 <script src="matcher.js"></script>
 <script>
 (function () {
   const $ = (id) => document.getElementById(id);
+  let LAST_RESULTS = [];
 
   const pids = {
     SURGE_RATIO: 'p_surge', MA_WINDOW: 'p_ma', FALL_DAYS: 'p_fall',
@@ -129,14 +169,44 @@
     return out;
   }
 
+  function drawCandle(canvas, k) {
+    const ctx = canvas.getContext('2d');
+    const W = canvas.width, H = canvas.height;
+    ctx.clearRect(0, 0, W, H);
+    const n = k.closes.length;
+    if (!n) return;
+    const allHigh = Math.max(...k.highs);
+    const allLow = Math.min(...k.lows);
+    const pad = 6;
+    const range = (allHigh - allLow) || 1;
+    const cw = (W - pad * 2) / n;
+    const bw = Math.max(1, cw * 0.6);
+    for (let i = 0; i < n; i++) {
+      const x = pad + i * cw + cw / 2;
+      const yH = pad + (allHigh - k.highs[i]) / range * (H - pad * 2);
+      const yL = pad + (allHigh - k.lows[i]) / range * (H - pad * 2);
+      const yO = pad + (allHigh - k.opens[i]) / range * (H - pad * 2);
+      const yC = pad + (allHigh - k.closes[i]) / range * (H - pad * 2);
+      const up = k.closes[i] >= k.opens[i];
+      ctx.strokeStyle = up ? '#ff4757' : '#00d26a'; // 涨红跌绿(中国习惯)
+      ctx.fillStyle = ctx.strokeStyle;
+      ctx.beginPath(); ctx.moveTo(x, yH); ctx.lineTo(x, yL); ctx.stroke();
+      const top = Math.min(yO, yC);
+      const hgt = Math.max(1, Math.abs(yC - yO));
+      ctx.fillRect(x - bw / 2, top, bw, hgt);
+    }
+  }
+
   function renderResults(results) {
     const box = $('results');
+    LAST_RESULTS = results;
     $('resultCount').textContent = results.length ? `(${results.length} 只命中)` : '';
+    $('exportRow').style.display = results.length ? 'flex' : 'none';
     if (!results.length) {
       box.innerHTML = '<div class="empty">无命中。可尝试放宽 SURGE_RATIO 或缩短 FALL_DAYS。</div>';
       return;
     }
-    box.innerHTML = results.slice(0, 100).map(r => {
+    box.innerHTML = results.slice(0, 100).map((r, idx) => {
       const matched = r.matched;
       const tags = [
         `<span class="tag">${r.code}</span>`,
@@ -146,14 +216,27 @@
         `<span class="tag">连跌${r.fall_len}天</span>`,
         `<span class="tag">今+${r.today_chg}%</span>`,
       ].join('');
-      const chart = matched ? `<div class="chart">${asciiChart(r.volumes)}</div>` : '';
-      return `<div class="result-item">
+      const vol = matched ? `<div class="chart">${asciiChart(r.volumes)}</div>` : '';
+      return `<div class="result-item" data-idx="${idx}">
         <div class="top"><span class="name">${r.name || r.code}</span>
           <span class="score">${r.score}</span></div>
         <div class="meta">${tags}</div>
-        ${chart}
+        ${vol}
+        <div class="kline"><canvas width="600" height="160"></canvas></div>
       </div>`;
     }).join('');
+
+    box.querySelectorAll('.result-item').forEach(el => {
+      el.addEventListener('click', () => {
+        const kline = el.querySelector('.kline');
+        const open = kline.style.display === 'block';
+        kline.style.display = open ? 'none' : 'block';
+        if (!open) {
+          const r = LAST_RESULTS[parseInt(el.dataset.idx, 10)];
+          if (r && r.kline) drawCandle(kline.querySelector('canvas'), r.kline);
+        }
+      });
+    });
   }
 
   $('btnScan').addEventListener('click', async () => {
@@ -181,6 +264,26 @@
       `完成：候选 ${filtered.length} 只，符合全部规则 ${matched.length} 只，耗时 ${((Date.now() - t0) / 1000).toFixed(0)} 秒`;
     renderResults(matched);
     btn.disabled = false;
+  });
+
+  // ---------- 导出 ----------
+  function openExport() {
+    const text = VolMatcher.exportTdxText(LAST_RESULTS, false);
+    $('exportText').value = text;
+    $('exportMask').classList.add('show');
+  }
+  $('btnExport').addEventListener('click', openExport);
+  $('btnClose').addEventListener('click', () => $('exportMask').classList.remove('show'));
+  $('exportMask').addEventListener('click', (e) => {
+    if (e.target === $('exportMask')) $('exportMask').classList.remove('show');
+  });
+  $('btnCopy').addEventListener('click', async () => {
+    const r = await VolMatcher.shareOrCopy($('exportText').value);
+    alert(r === 'copied' ? '已复制到剪贴板' : (r === 'shared' ? '已唤起分享' : '复制失败，请手动长按选择'));
+  });
+  $('btnShare').addEventListener('click', async () => {
+    const r = await VolMatcher.shareOrCopy($('exportText').value);
+    if (r === 'fail') alert('当前环境不支持分享，请改用「复制」');
   });
 })();
 </script>
