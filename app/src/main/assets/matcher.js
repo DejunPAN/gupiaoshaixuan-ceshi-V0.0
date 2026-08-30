@@ -233,6 +233,7 @@ async function coarseFilter(progressCb) {
   let done = 0;
   for (let i = 0; i < codespace.length; i += CHUNK) {
     const chunk = codespace.slice(i, i + CHUNK);
+    const symChunk = chunk.map(code => (code.startsWith('6') ? 'sh' : 'sz') + code);
     let text = '';
     if (hasBridge()) {
       text = await bridgeFetchQuotes(chunk);
