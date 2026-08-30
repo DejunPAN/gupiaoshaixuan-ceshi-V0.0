@@ -236,9 +236,9 @@ async function coarseFilter(progressCb) {
     const symChunk = chunk.map(code => (code.startsWith('6') ? 'sh' : 'sz') + code);
     let text = '';
     if (hasBridge()) {
-      text = await bridgeFetchQuotes(symchunk);
+      text = await bridgeFetchQuotes(symChunk);
     } else {
-      text = await browserFetchQuotes(symchunk);
+      text = await browserFetchQuotes(symChunk);
     }
     const got = parseQuotes(text);
     all.push(...got);
