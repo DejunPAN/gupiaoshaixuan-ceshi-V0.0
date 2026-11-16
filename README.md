@@ -1,0 +1,62 @@
+# 换手突破选股 (TurnoverBreakout)
+
+手机端（Android APK）本地选股工具。无需服务器，全在手机本地运行。
+
+## 选股规则
+
+按以下 4 条规则扫描全市场：
+
+1. 换手率 > 阈值（默认 `5%`，可在 App 内修改）。
+2. 当日最低价 > 前 2 个交易日的最低价。
+3. 当日最高价 > 前 2 个交易日的最高价。
+4. 排除北交所和科创板，只保留沪深主板 + 创业板（`600/601/603/605/000/001/002/003/300/301/302`）。
+
+说明：
+- “前 2 个交易日”指 K 线中倒数第 2、倒数第 3 根日 K。
+- “当日”指 K 线最后一根日 K；盘中运行时为当天实时日 K，收盘后为当天收盘日 K。
+- 当前版本不额外加入 ST、股价上限等未指定过滤条件；如需要可以后续再加开关。
+
+## 数据源
+
+- 粗筛（名称 + 现价 + 换手率）：腾讯批量行情 `qt.gtimg.cn`（GBK），换手率取行情字段第 38 位。
+- 精筛（当日/前 2 日最高最低价）：新浪 K 线 `quotes.sina.cn`，由原生桥拉取，绕过 CORS。
+- 数据新鲜度：K 线最后一根日期需距今 60 天内，用于过滤长期停牌/退市股的陈旧数据；这不是选股规则本身。
+
+## 技术栈
+
+- Android WebView + `addJavascriptInterface` 原生桥。
+- H5 前端 + 纯 JS 筛选算法（`matcher.js`）。
+- 零第三方依赖，零服务器。
+
+## 如何构建 APK（GitHub Actions 云端，本机零安装）
+
+1. 登录 github.com → 打开本仓库或新建仓库。
+2. 把本文件夹内容放到仓库根目录。
+3. 进 Actions 标签 → 选中 `Build APK` workflow → Run workflow。
+4. 构建完成后，下载本次运行的 `VolMatcher-release` artifact，解压得到 APK。
+5. 传到手机安装即可。
+
+首次构建约 5-10 分钟（需下载 JDK/Android SDK/Gradle 依赖）。
+
+> 注意：`build.gradle` 里的 release 签名密码默认是 `volmatcher123`，仅供个人自用。若要发布到应用商店，请自行更换 keystore 与密码。
+
+## 目录结构
+
+```
+.
+├── settings.gradle
+├── build.gradle
+├── gradle.properties
+├── .github/workflows/build-apk.yml   # 云端构建配置
+└── app/
+    ├── build.gradle
+    └── src/main/
+        ├── AndroidManifest.xml
+        ├── java/com/volmatcher/app/
+        │   ├── MainActivity.java      # WebView 壳
+        │   └── KlineBridge.java       # 原生网络桥(绕 CORS)
+        ├── assets/
+        │   ├── index.html             # H5 前端
+        │   └── matcher.js             # 换手突破算法 + 数据层
+        └── res/...                     # 图标/主题/布局
+```
