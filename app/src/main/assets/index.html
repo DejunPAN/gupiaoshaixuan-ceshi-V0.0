@@ -342,8 +342,6 @@
     const prev = q.prevClose != null ? q.prevClose : pts[0].price;
     let min = Math.min(...pts.map(p => p.price), prev);
     let max = Math.max(...pts.map(p => p.price), prev);
-    const avgs = pts.map(p => p.avg).filter(v => isFinite(v) && v > 0);
-    if (avgs.length) { min = Math.min(min, ...avgs); max = Math.max(max, ...avgs); }
     if (!(max > min)) { max = min + 0.01; min = min - 0.01; }
     const pad = (max - min) * 0.06;
     min -= pad; max += pad;
@@ -408,18 +406,6 @@
     ctx.lineWidth = 1.4;
     ctx.stroke();
 
-    // 均价线
-    if (avgs.length) {
-      ctx.beginPath();
-      pts.forEach((p, i) => {
-        const x = xFor(timeToSlot(p.t));
-        const y = yFor(p.avg);
-        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
-      });
-      ctx.strokeStyle = '#f6c343';
-      ctx.lineWidth = 1;
-      ctx.stroke();
-    }
 
     // 时间标签
     ctx.fillStyle = '#8a93a8';
