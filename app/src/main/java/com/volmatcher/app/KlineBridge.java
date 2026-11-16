@@ -78,6 +78,25 @@ public class KlineBridge {
         return "\"" + escapeJson(body) + "\"";
     }
 
+    // ---------------- 腾讯分时 ----------------
+
+    @JavascriptInterface
+    public void fetchIntraday(final String code, final String callback) {
+        executor.execute(() -> {
+            String json = doGetIntraday(code);
+            runCallback(callback, json);
+        });
+    }
+
+    private String doGetIntraday(String code) {
+        String symbol = (code.startsWith("6") ? "sh" : "sz") + code;
+        String url = "https://web.ifzq.gtimg.cn/appstock/app/minute/query?code=" + symbol;
+        String body = httpGet(url, "UTF-8",
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/126.0.0.0 Safari/537.36",
+                "https://gu.qq.com/");
+        return body == null ? "null" : body;
+    }
+
     // ---------------- 系统分享(通达信/微信/文件管理器) ----------------
 
     @JavascriptInterface

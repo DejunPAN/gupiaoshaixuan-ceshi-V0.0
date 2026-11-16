@@ -38,7 +38,37 @@ function round2(n) {
 
 // ============ 纯函数: 判定算法 ============
 
-/** 解析腾讯批量行情文本 -> [{code,name,price,high,low,turnover}, ...] */
+function numAt(parts, i) {
+  const v = parseFloat(parts[i]);
+  return isFinite(v) ? v : null;
+}
+
+/** 解析腾讯行情字段数组 -> 股票对象 */
+function parseQuoteParts(parts) {
+  if (!parts || parts.length < 39) return null;
+  const name = parts[1];
+  const code = parts[2];
+  if (!/^\d{6}$/.test(code) || !isAllowedBoard(code)) return null;
+  const price = numAt(parts, 3);
+  if (price == null || price <= 0) return null;
+  return {
+    code,
+    name,
+    price,
+    prevClose: numAt(parts, 4),
+    open: numAt(parts, 5),
+    high: numAt(parts, 33),
+    low: numAt(parts, 34),
+    change: numAt(parts, 31),
+    changePct: numAt(parts, 32),
+    volume: numAt(parts, 36),   // 手
+    amount: numAt(parts, 37),   // 万元
+    turnover: numAt(parts, 38), // %
+    amplitude: numAt(parts, 43),
+  };
+}
+
+/** 解析腾讯批量行情文本 -> [{code,name,price,...}, ...] */
 function parseQuotes(text) {
   const stocks = [];
   if (!text) return stocks;
@@ -48,26 +78,50 @@ function parseQuotes(text) {
     if (idx < 0) continue;
     const payload = seg.slice(idx + 2).replace(/"$/, '');
     if (!payload) continue;
-    const parts = payload.split('~');
-    if (parts.length < 39) continue;
-    const name = parts[1];
-    const code = parts[2];
-    const price = parseFloat(parts[3]);
-    const high = parseFloat(parts[33]);
-    const low = parseFloat(parts[34]);
-    const turnover = parseFloat(parts[38]); // 腾讯行情第 38 位: 换手率(%)
-    if (!/^\d{6}$/.test(code) || !isAllowedBoard(code)) continue;
-    if (!isFinite(price) || price <= 0) continue;
-    stocks.push({
-      code,
-      name,
-      price,
-      high: isFinite(high) ? high : null,
-      low: isFinite(low) ? low : null,
-      turnover: isFinite(turnover) ? turnover : null,
-    });
+    const stock = parseQuoteParts(payload.split('~'));
+    if (stock) stocks.push(stock);
   }
   return stocks;
+}
+
+/**
+ * 解析腾讯分时 JSON:
+ * { data: { sh600519: { data: { data: ["0930 1426.30 189 26957070.00", ...], date: "..." }, qt: {...} } } }
+ * 返回 { date, points: [{t, price, avg, vol, amount}], quote }
+ */
+function parseIntraday(raw) {
+  if (!raw || !raw.data) return null;
+  const codeKey = Object.keys(raw.data).find(k => raw.data[k] && raw.data[k].data);
+  if (!codeKey) return null;
+  const node = raw.data[codeKey];
+  const arr = node.data && node.data.data;
+  if (!Array.isArray(arr)) return null;
+
+  const points = [];
+  let prevVol = 0;
+  let prevAmount = 0;
+  for (const line of arr) {
+    const p = String(line).trim().split(/\s+/);
+    if (p.length < 4) continue;
+    const t = p[0];
+    const price = parseFloat(p[1]);
+    const cumVol = parseFloat(p[2]);
+    const cumAmount = parseFloat(p[3]);
+    if (!isFinite(price) || !isFinite(cumVol) || !isFinite(cumAmount)) continue;
+    const vol = Math.max(0, cumVol - prevVol);
+    const amount = Math.max(0, cumAmount - prevAmount);
+    prevVol = cumVol;
+    prevAmount = cumAmount;
+    const avg = cumVol > 0 ? cumAmount / (cumVol * 100) : price;
+    points.push({ t, price, avg, vol, amount, cumVol, cumAmount });
+  }
+
+  let quote = null;
+  if (node.qt) {
+    const qkey = Object.keys(node.qt).find(k => Array.isArray(node.qt[k]) && node.qt[k].length > 10);
+    if (qkey) quote = parseQuoteParts(node.qt[qkey]);
+  }
+  return { date: (node.data && node.data.date) || '', points, quote };
 }
 
 /** 是否属于允许扫描的板块(沪深主板 + 创业板); 自动排除北交所/科创板 */
@@ -184,6 +238,20 @@ function bridgeFetchQuotes(codesChunk) {
   });
 }
 
+/** 原生桥: 拉腾讯分时 JSON(返回对象或 null) */
+function bridgeFetchIntraday(code) {
+  return new Promise((resolve) => {
+    const cb = '__volCb' + (++callbackSeq);
+    const timer = setTimeout(() => { delete window[cb]; resolve(null); }, 20000);
+    window[cb] = (raw) => {
+      clearTimeout(timer);
+      delete window[cb];
+      resolve(raw == null || raw === 'null' ? null : raw);
+    };
+    window.NativeData.fetchIntraday(code, cb);
+  });
+}
+
 /** 构建全市场代码空间(板块白名单) */
 function buildCodeSpace() {
   const codes = [];
@@ -269,6 +337,7 @@ async function fineScan(filtered, progressCb) {
           name: stock ? stock.name : code,
           price: stock ? stock.price : null,
           turnover: stock ? stock.turnover : null,
+          quote: stock || null,
           score,
           dates: data.dates,
           kline: data,
@@ -305,6 +374,22 @@ async function fetchKline(code, days) {
   }
   // 浏览器兜底: 新浪 K 线无 CORS, 基本会失败; 无桥环境下只能跑粗筛
   return data;
+}
+
+/** 拉分时数据(仅 App 原生桥可用) */
+async function fetchIntraday(code) {
+  if (!hasBridge()) return null;
+  const raw = await bridgeFetchIntraday(code);
+  return parseIntraday(raw);
+}
+
+/** 详情页数据: 60 日日 K + 当日分时 */
+async function loadDetail(code) {
+  const [kline, intraday] = await Promise.all([
+    fetchKline(code, 60),
+    fetchIntraday(code),
+  ]);
+  return { kline, intraday };
 }
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
@@ -348,9 +433,14 @@ if (typeof window !== 'undefined') {
     analyze: analyzeTurnoverBreakout,
     analyzeTurnoverBreakout,
     parseQuotes,
+    parseQuoteParts,
+    parseIntraday,
     isAllowedBoard,
     coarseFilter,
     fineScan,
+    fetchIntraday,
+    fetchKline,
+    loadDetail,
     buildCodeSpace,
     tdxSymbol,
     exportTdxText,
@@ -364,9 +454,14 @@ if (typeof module !== 'undefined' && module.exports) {
     analyze: analyzeTurnoverBreakout,
     analyzeTurnoverBreakout,
     parseQuotes,
+    parseQuoteParts,
+    parseIntraday,
     isAllowedBoard,
     coarseFilter,
     fineScan,
+    fetchIntraday,
+    fetchKline,
+    loadDetail,
     buildCodeSpace,
     tdxSymbol,
     exportTdxText,
