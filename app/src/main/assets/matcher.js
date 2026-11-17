@@ -14,6 +14,7 @@ const CFG = {
   TURNOVER_MIN: 5,     // 换手率下限(%)
   TURNOVER_MAX: 30,    // 换手率上限(%)
   AMPLITUDE_MAX: 12,   // 振幅上限(%)
+  DETAIL_DAYS: 180,    // 详情页日K数量
   MIN_FRESH_DAYS: 60,  // K 线最后一根距今天数超过此值视为陈旧数据
   CONCURRENCY: 6,      // 拉 K 线并发数
 };
@@ -400,13 +401,10 @@ async function fetchIntraday(code) {
   return parseIntraday(raw);
 }
 
-/** 详情页数据: 60 日日 K + 当日分时 */
+/** 详情页数据: 最近 180 个交易日日 K(不再拉分时) */
 async function loadDetail(code) {
-  const [kline, intraday] = await Promise.all([
-    fetchKline(code, 60),
-    fetchIntraday(code),
-  ]);
-  return { kline, intraday };
+  const kline = await fetchKline(code, CFG.DETAIL_DAYS || 180);
+  return { kline };
 }
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
