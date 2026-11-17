@@ -409,7 +409,7 @@
 
     bars.forEach((b, i) => {
       const up = b.close >= b.open;
-      const color = up ? '#ff4757' : '#00d26a';
+      const color = up ? '#ff4757' : '#87cefa';
       const x = xFor(i);
       ctx.strokeStyle = color;
       ctx.fillStyle = color;
@@ -434,7 +434,7 @@
       const b = bars[i];
       const h = Math.max(0.5, b.volume / maxVol * vH);
       const x = vleft + step * i + step / 2 - bw / 2;
-      v.ctx.fillStyle = b.close >= b.open ? '#ff4757' : '#00d26a';
+      v.ctx.fillStyle = b.close >= b.open ? '#ff4757' : '#87cefa';
       v.ctx.fillRect(x, v.H - vbottom - h, bw, h);
     }
     v.ctx.strokeStyle = '#1d2f52';
@@ -454,6 +454,25 @@
   function setKlineView(bars) {
     KLINE_VIEW_BARS = Math.max(KLINE_MIN_BARS, Math.min(KLINE_MAX_BARS, Math.round(bars)));
     if (CURRENT_DETAIL && CURRENT_DETAIL.kline) drawKline(CURRENT_DETAIL.kline);
+  }
+
+  function withCurrentBar(kline, quote) {
+    if (!kline || !kline.dates || !quote || !quote.tradeDate || quote.open == null || quote.high == null || quote.low == null || quote.price == null) return kline;
+    if (!(quote.open > 0 && quote.high > 0 && quote.low > 0 && quote.price > 0)) return kline;
+    const qDate = fmtDate(quote.tradeDate);
+    const lastDate = kline.dates[kline.dates.length - 1];
+    if (!qDate || (lastDate && qDate <= lastDate)) return kline;
+    const dates = kline.dates.concat([qDate]);
+    const opens = kline.opens.concat([quote.open]);
+    const highs = kline.highs.concat([quote.high]);
+    const lows = kline.lows.concat([quote.low]);
+    const closes = kline.closes.concat([quote.price]);
+    const volumes = kline.volumes.concat([quote.volume != null ? quote.volume * 100 : 0]); // 腾讯是手，K线是股
+    if (dates.length <= 180) return { dates, opens, highs, lows, closes, volumes };
+    return {
+      dates: dates.slice(-180), opens: opens.slice(-180), highs: highs.slice(-180),
+      lows: lows.slice(-180), closes: closes.slice(-180), volumes: volumes.slice(-180),
+    };
   }
 
   function updatePager() {
@@ -505,7 +524,7 @@
         $('detailLoading').textContent = 'K线数据加载失败，请确认网络后重试。';
         return;
       }
-      CURRENT_DETAIL = { ...r, ...data };
+      CURRENT_DETAIL = { ...r, ...data, kline: withCurrentBar(data.kline, r.quote || r) };
       renderDetailMeta(r.quote || r, r);
       $('detailLoading').style.display = 'none';
       requestAnimationFrame(() => setTimeout(() => drawCharts(CURRENT_DETAIL), 30));

@@ -69,6 +69,7 @@ function parseQuoteParts(parts) {
     amount: numAt(parts, 37),   // 万元
     turnover: numAt(parts, 38), // %
     amplitude: numAt(parts, 43),
+    tradeDate: parts[30] ? String(parts[30]).slice(0, 8) : null, // YYYYMMDD
   };
 }
 
@@ -162,13 +163,28 @@ function analyzeTurnoverBreakout(stock, k, cfg) {
   }
 
   const n = k.dates.length;
-  const todayHigh = parseFloat(k.highs[n - 1]);
-  const todayLow = parseFloat(k.lows[n - 1]);
-  const prevHighMax = Math.max(parseFloat(k.highs[n - 2]), parseFloat(k.highs[n - 3]));
-  const prevLowMax = Math.max(parseFloat(k.lows[n - 2]), parseFloat(k.lows[n - 3]));
+  const quoteDate = stock && stock.tradeDate ? String(stock.tradeDate) : null;
+  const toQuoteDate = d => String(d).replace(/-/g, '');
+
+  // 当日高低价必须来自腾讯实时行情；K 线只用于取“之前 2 个交易日”。
+  // 盘中新浪日 K 往往还没有今天这一根，若直接用最后一根会误用昨天。
+  const todayHigh = stock ? parseFloat(stock.high) : NaN;
+  const todayLow = stock ? parseFloat(stock.low) : NaN;
+
+  const prevBars = [];
+  for (let i = n - 1; i >= 0 && prevBars.length < 2; i--) {
+    if (quoteDate && toQuoteDate(k.dates[i]) >= quoteDate) continue; // 跳过今天(若日K已包含)
+    prevBars.push({ high: parseFloat(k.highs[i]), low: parseFloat(k.lows[i]) });
+  }
+  if (prevBars.length < 2) {
+    detail.reasons.push('前2个交易日K线不足');
+    return { score: 0, detail };
+  }
+  const prevHighMax = Math.max(prevBars[0].high, prevBars[1].high);
+  const prevLowMax = Math.max(prevBars[0].low, prevBars[1].low);
 
   if (![todayHigh, todayLow, prevHighMax, prevLowMax].every(v => isFinite(v) && v > 0)) {
-    detail.reasons.push('K线高低价无效');
+    detail.reasons.push('当日行情或前2日K线高低价无效');
     return { score: 0, detail };
   }
 
