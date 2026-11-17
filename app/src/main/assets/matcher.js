@@ -1,16 +1,19 @@
 /**
  * 换手突破选股 - 筛选核心算法 + 数据层
  * 选股规则:
- *   1. 换手率 > 阈值(默认 5%)
- *   2. 当日最低价 > 前 2 个交易日的最低价
- *   3. 当日最高价 > 前 2 个交易日的最高价
- *   4. 排除北交所 / 科创板(代码白名单只保留沪深主板 + 创业板)
+ *   1. 换手率 > 下限(默认 5%) 且 < 上限(默认 30%)
+ *   2. 振幅 < 上限(默认 12%)
+ *   3. 当日最低价 > 前 2 个交易日的最低价
+ *   4. 当日最高价 > 前 2 个交易日的最高价
+ *   5. 排除北交所 / 科创板(代码白名单只保留沪深主板 + 创业板)
  */
 
 // ---------- 可调参数(默认值, UI 可改) ----------
 const CFG = {
   DAYS: 10,            // 拉取 K 线交易日数量(至少 3 日用于判定高低价突破)
   TURNOVER_MIN: 5,     // 换手率下限(%)
+  TURNOVER_MAX: 30,    // 换手率上限(%)
+  AMPLITUDE_MAX: 12,   // 振幅上限(%)
   MIN_FRESH_DAYS: 60,  // K 线最后一根距今天数超过此值视为陈旧数据
   CONCURRENCY: 6,      // 拉 K 线并发数
 };
@@ -137,6 +140,7 @@ function analyzeTurnoverBreakout(stock, k, cfg) {
   const detail = {
     matched: false,
     turnover: stock ? stock.turnover : null,
+    amplitude: stock ? stock.amplitude : null,
     today_high: null,
     today_low: null,
     prev_high: null,
@@ -168,14 +172,24 @@ function analyzeTurnoverBreakout(stock, k, cfg) {
   }
 
   const turnover = stock ? parseFloat(stock.turnover) : NaN;
+  const amplitude = stock ? parseFloat(stock.amplitude) : NaN;
   detail.turnover = isFinite(turnover) ? turnover : null;
+  detail.amplitude = isFinite(amplitude) ? amplitude : null;
   detail.today_high = round2(todayHigh);
   detail.today_low = round2(todayLow);
   detail.prev_high = round2(prevHighMax);
   detail.prev_low = round2(prevLowMax);
 
-  if (!isFinite(turnover) || turnover <= (cfg && cfg.TURNOVER_MIN != null ? cfg.TURNOVER_MIN : CFG.TURNOVER_MIN)) {
-    detail.reasons.push('换手率未高于阈值');
+  const turnoverMin = cfg && cfg.TURNOVER_MIN != null ? cfg.TURNOVER_MIN : CFG.TURNOVER_MIN;
+  const turnoverMax = cfg && cfg.TURNOVER_MAX != null ? cfg.TURNOVER_MAX : CFG.TURNOVER_MAX;
+  const amplitudeMax = cfg && cfg.AMPLITUDE_MAX != null ? cfg.AMPLITUDE_MAX : CFG.AMPLITUDE_MAX;
+
+  if (!isFinite(turnover) || turnover <= turnoverMin || turnover >= turnoverMax) {
+    detail.reasons.push(`换手率需在${turnoverMin}%~${turnoverMax}%之间`);
+    return { score: 0, detail };
+  }
+  if (!isFinite(amplitude) || amplitude >= amplitudeMax) {
+    detail.reasons.push(`振幅需小于${amplitudeMax}%`);
     return { score: 0, detail };
   }
 
@@ -289,7 +303,10 @@ async function coarseFilter(progressCb) {
     if (progressCb) progressCb(done, codespace.length, all.length);
     await sleep(80);
   }
-  const filtered = all.filter(s => s.turnover != null && s.turnover > CFG.TURNOVER_MIN);
+  const filtered = all.filter(s =>
+    s.turnover != null && s.turnover > CFG.TURNOVER_MIN && s.turnover < CFG.TURNOVER_MAX &&
+    s.amplitude != null && s.amplitude < CFG.AMPLITUDE_MAX
+  );
   return { all, filtered };
 }
 

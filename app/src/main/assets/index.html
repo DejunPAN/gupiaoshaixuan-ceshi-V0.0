@@ -86,7 +86,7 @@
   .down { color: var(--accent); }
   .flat { color: var(--muted); }
   .info-grid {
-    display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px;
+    display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px;
     background: #2c3e66; border-radius: 8px; overflow: hidden; margin-bottom: 12px;
   }
   .info-grid > div { background: var(--panel); padding: 8px 5px; text-align: center; }
@@ -132,18 +132,21 @@
 <body>
   <div id="listPage">
     <h1>换手突破选股</h1>
-    <div class="sub">换手率 &gt; 阈值 · 当日最高价/最低价同时突破前两日 · 全市场扫描</div>
+    <div class="sub">换手率 5%~30% · 振幅 &lt; 12% · 当日最高/最低价突破前两日 · 全市场扫描</div>
 
     <div class="card">
       <h2>筛选条件</h2>
       <div class="rules">
-        1. 换手率 &gt; 阈值；<br>
-        2. 当日最低价 &gt; 前 2 个交易日最低价；<br>
-        3. 当日最高价 &gt; 前 2 个交易日最高价；<br>
-        4. 仅扫描沪深主板 + 创业板，排除北交所与科创板。
+        1. 5% &lt; 换手率 &lt; 30%；<br>
+        2. 振幅 &lt; 12%；<br>
+        3. 当日最低价 &gt; 前 2 个交易日最低价；<br>
+        4. 当日最高价 &gt; 前 2 个交易日最高价；<br>
+        5. 仅扫描沪深主板 + 创业板，排除北交所与科创板。
       </div>
       <div class="grid">
-        <div><label>换手率阈值(%)</label><input id="p_turnover" type="number" step="0.5" value="5"></div>
+        <div><label>换手率下限(%)</label><input id="p_turnover" type="number" step="0.5" value="5"></div>
+        <div><label>换手率上限(%)</label><input id="p_turnover_max" type="number" step="0.5" value="30"></div>
+        <div><label>振幅上限(%)</label><input id="p_amplitude_max" type="number" step="0.5" value="12"></div>
       </div>
       <button id="btnScan">开始全市场扫描</button>
       <div class="progress" id="progress">
@@ -177,6 +180,7 @@
       <div><label>开盘</label><span id="d_open">-</span></div>
       <div><label>最低</label><span id="d_low">-</span></div>
       <div><label>换手率</label><span id="d_turnover">-</span></div>
+      <div><label>振幅</label><span id="d_amplitude">-</span></div>
       <div><label>昨收</label><span id="d_prev">-</span></div>
       <div><label>涨幅</label><span id="d_pct">-</span></div>
       <div><label>成交量</label><span id="d_vol">-</span></div>
@@ -235,7 +239,16 @@
 
   function readCfg() {
     const tv = parseFloat($('p_turnover').value);
+    const tvMax = parseFloat($('p_turnover_max').value);
+    const ampMax = parseFloat($('p_amplitude_max').value);
     CFG.TURNOVER_MIN = Number.isFinite(tv) ? tv : 5;
+    CFG.TURNOVER_MAX = Number.isFinite(tvMax) ? tvMax : 30;
+    CFG.AMPLITUDE_MAX = Number.isFinite(ampMax) ? ampMax : 12;
+    if (CFG.TURNOVER_MIN >= CFG.TURNOVER_MAX) {
+      showToast('换手率下限必须小于上限');
+      return false;
+    }
+    return true;
   }
 
   function setProgress(shown, text, pct) {
@@ -296,6 +309,8 @@
     setText('d_open', fmtPrice(q.open));
     setText('d_low', fmtPrice(q.low));
     setText('d_turnover', q.turnover != null && isFinite(q.turnover) ? Number(q.turnover).toFixed(2) + '%' : (fallback.turnover != null ? Number(fallback.turnover).toFixed(2) + '%' : '-'));
+    const amp = q.amplitude != null ? q.amplitude : fallback.amplitude;
+    setText('d_amplitude', amp != null && isFinite(amp) ? Number(amp).toFixed(2) + '%' : '-');
     setText('d_prev', fmtPrice(q.prevClose));
     setText('d_pct', pct == null ? '-' : fmtPct(pct));
     $('d_pct').className = priceColor(pct);
@@ -590,7 +605,7 @@
     $('resultCount').textContent = results.length ? `(${results.length} 只命中)` : '';
     $('exportRow').style.display = results.length ? 'flex' : 'none';
     if (!results.length) {
-      box.innerHTML = '<div class="empty">无命中。可降低换手率阈值，或在交易时段/收盘后重试。</div>';
+      box.innerHTML = '<div class="empty">无命中。可放宽换手率或振幅条件，或在交易时段/收盘后重试。</div>';
       return;
     }
     box.innerHTML = results.slice(0, 100).map((r, idx) => {
@@ -599,6 +614,7 @@
         `<span class="tag">${r.code}</span>`,
         `<span class="tag">¥${price}</span>`,
         `<span class="tag">换手${r.turnover != null ? r.turnover : '-'}%</span>`,
+        `<span class="tag">振幅${r.amplitude != null ? r.amplitude : '-'}%</span>`,
         `<span class="tag">高${r.today_high} &gt; ${r.prev_high}</span>`,
         `<span class="tag">低${r.today_low} &gt; ${r.prev_low}</span>`,
         `<span class="tag">分${r.score}</span>`,
@@ -619,17 +635,17 @@
   }
 
   $('btnScan').addEventListener('click', async () => {
-    readCfg();
     const btn = $('btnScan');
+    if (!readCfg()) return;
     btn.disabled = true;
-    setProgress(true, '第一步：粗筛全市场（拉取名称+现价+换手率）...', 2);
+    setProgress(true, '第一步：粗筛全市场（拉取名称+现价+换手率+振幅）...', 2);
 
     const t0 = Date.now();
     const { filtered } = await VolMatcher.coarseFilter((done, total) => {
       setProgress(true, `第一步：粗筛中 ${done}/${total}`, 2 + Math.round(done / total * 28));
     });
     $('stat').style.display = 'block';
-    $('stat').textContent = `粗筛完成：全市场活跃股 → 换手率 > ${CFG.TURNOVER_MIN}% 的候选 ${filtered.length} 只，开始精筛...`;
+    $('stat').textContent = `粗筛完成：全市场活跃股 → 换手率 ${CFG.TURNOVER_MIN}%~${CFG.TURNOVER_MAX}% 且振幅 < ${CFG.AMPLITUDE_MAX}% 的候选 ${filtered.length} 只，开始精筛...`;
     setProgress(true, `第二步：精筛 ${filtered.length} 只（拉K线+判定高低价突破）...`, 30);
 
     const results = await VolMatcher.fineScan(filtered, (idx, total) => {
